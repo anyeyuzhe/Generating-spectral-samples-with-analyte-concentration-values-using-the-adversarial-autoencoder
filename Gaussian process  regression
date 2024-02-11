@@ -1,0 +1,162 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
+import numpy as np
+import numpy as np
+from sklearn.cluster import KMeans
+import numpy as np
+import os
+import scipy.io as scio
+from sklearn.model_selection import train_test_split
+import pycaltransfer.caltransfer as caltransfer
+from sklearn.cross_decomposition import PLSRegression
+from sklearn import preprocessing
+from sklearn.metrics import mean_squared_error, r2_score
+import pandas as pd
+import numpy as np
+from matplotlib.pyplot import MultipleLocator
+from sklearn.decomposition import PCA
+import pandas as pd
+import scipy.io as scio
+import os
+import os
+import scipy.io as scio
+import matplotlib.pyplot as plt
+import numpy as np
+import math
+import random
+import warnings
+import matplotlib.pyplot as plt
+import lightgbm as lgb
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.datasets import make_blobs
+
+data = np.array(pd.read_excel(r"D:\data enhancement.xlsx", header=None, sheet_name="corn_train"))
+data1 = np.array(pd.read_excel(r"D:\data enhancement.xlsx", header=None, sheet_name="corn_test"))
+# data2 = np.array(pd.read_excel(r"D:\data enhancement.xlsx", header=None, sheet_name="R862_AAE"))
+
+train_X = data[:, 0:-1]
+train_y = data[:, -1]
+
+test_X = data1[:, 0:-1]
+test_y = data1[:, -1]
+
+# Visualization of the original distribution
+index = np.arange(0, len(train_y), 1)
+plt.figure(figsize=(10, 6))
+plt.plot(index, train_y, 'b-', label='predicted mean')
+plt.xlabel('X')
+plt.ylabel('y')
+plt.show(block=True)
+
+
+# set threshold
+# threshold = 12
+# filtered_indices = np.where(train_y > threshold)[0]
+#
+# train_y = train_y[filtered_indices]
+#
+# index1 = np.arange(0, len(train_y), 1)
+# plt.figure(figsize=(10, 6))
+# plt.plot(index1, train_y, 'b-', label='predicted mean')
+# plt.xlabel('X')
+# plt.ylabel('y')
+# # plt.legend()
+# # plt.title('Gaussian Process Regression')
+# plt.show(block=True)
+#
+# # representative_samples trainX
+# trainX = data[filtered_indices]
+
+# Defining the Gaussian Process Regression model
+
+gpr = GaussianProcessRegressor()
+
+# mixed_kernel = kernel = CK(1.0, (1e-4, 1e4)) * RBF(10, (1e-4, 1e4))  #
+mixed_kernel = 1.0 * RBF(length_scale=1.0)
+
+gpr = GaussianProcessRegressor(alpha=30,
+                               n_restarts_optimizer=20,
+                               kernel=mixed_kernel)
+
+gpr.fit(train_X, train_y)
+
+y_pred, sigma = gpr.predict(test_X, return_std=True)
+
+
+index2 = np.arange(0, len(y_pred), 1)
+# 可视化结果
+plt.figure(figsize=(10, 6))
+
+plt.plot(index2, y_pred, 'b-', label='Predicted mean')
+plt.fill_between(index2, y_pred - 1.96 * sigma, y_pred + 1.96 * sigma, alpha=0.2, color='blue', label='95% confidence interval')
+plt.xlabel('Input(x$_*$)', fontsize=15)
+plt.ylabel('Output(y$_*$)', fontsize=15)
+plt.rcParams.update({'font.size': 14})
+plt.legend(loc='upper right')
+# plt.title('Gaussian process Regression')
+
+plt.savefig('./image/savefig_example17.0.png', dpi=600)
+plt.show(block=True)
+
+
+
+gpr_model_r2 = r2_score(test_y, y_pred)
+gpr_model_rmse = np.sqrt(mean_squared_error(test_y, y_pred))
+
+print('gpr_model_r2效果:', round(gpr_model_r2, 4))
+print('gpr_model_rmse效果:', round(gpr_model_rmse, 4))
+
+
+
+# Scatter plot with regression line
+plt.subplots(figsize=(10, 6))
+plt.title("Meat")
+
+plt.xlabel("Y - True")
+plt.ylabel("Y - prediction")
+
+plt.plot((11, 22), (11, 22), color='y', linestyle='--')
+plt.scatter(test_y, y_pred, marker='o', c='none', edgecolors='g', alpha=1,
+            label="GPR_R2: 0.8218\nGPR_RMSE: 1.2767")
+plt.rcParams.update({'font.size': 10})
+plt.legend(loc='upper right')
+plt.savefig('./image/savefig_example14.1.png', dpi=600)
+plt.show(block=True)
+
+
+# search for target values
+top_indices = np.argsort(sigma)[-320:][::-1]
+
+print("representative_samples_Y:", y_pred[top_indices])
+
+trainY = y_pred[top_indices]
+
+n_sample = 320
+
+AAE_y = data2[:, -1]
+
+AAE_Y = AAE_y.reshape(-1, 1)
+
+representative_samples = []
+for i in range(n_sample):
+
+    distances = np.linalg.norm(AAE_Y - trainY[i], axis=1)
+
+
+    nearest_index = np.argmin(distances)
+
+    representative_samples.append(data2[nearest_index])
+
+    print(f"he sample closest to the target sample：{representative_samples}")
+
+
+representative_samples = np.array(representative_samples)
+
+save_dir1 = './gan_mat_data_enhancement'
+path = "gan_mat_data_enhancement"
+if not os.path.exists(path):
+    os.makedirs(path)
+scio.savemat('{}\\{}.mat'.format(save_dir1, corn), {'data_enhancement': representative_samples})
