@@ -1,0 +1,256 @@
+from __future__ import print_function, division
+import keras
+import tensorflow as tf
+from tensorflow import keras
+from keras import layers
+import random
+from sklearn.model_selection import train_test_split
+from keras.layers.convolutional import UpSampling1D, Conv1D
+from sklearn import preprocessing
+from keras.datasets import mnist
+from keras.layers import Input, Dense, Reshape, Flatten, Dropout, multiply, GaussianNoise
+from keras.layers import BatchNormalization, Activation, Embedding, ZeroPadding2D
+from keras.layers import MaxPooling2D
+import scipy.io as scio
+import warnings
+import matplotlib.pyplot as plt
+from keras.engine.base_layer import Layer
+from keras.layers.activation import LeakyReLU
+from keras.layers.convolutional import UpSampling2D, Conv2D
+from keras.models import Sequential, Model
+from keras.optimizers import Adam
+import os
+from keras import losses
+from keras.utils import to_categorical
+import keras.backend as K
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+warnings.filterwarnings("ignore")
+
+
+# import tensorflow as tf
+# from tensorflow import keras
+#
+# print(tf.__path__)
+# print(keras.__path__)
+class MergeLayer(Layer):
+
+    def __init__(self, **kwargs):
+        super(MergeLayer, self).__init__(**kwargs)
+
+    def compute_output_shape(self, input_shape):
+        return (input_shape[0][0], input_shape[0][1])
+
+    def call(self, x, mask=None):
+        final_output = x[0] + K.random_normal(K.shape(x[0])) * K.exp(x[1] / 2)
+        return final_output
+
+
+def build_encoder():
+    img = Input(shape=(ENCODING_DIM_INPUT,))
+
+    h = Dense(120, activation='relu')(img)
+    h = Dense(80, activation='relu')(h)
+    h = Dense(30, activation='relu')(h)
+    mu = Dense(latent_dim)(h)
+    log_var = Dense(latent_dim)(h)
+    latent_repr = MergeLayer()([mu, log_var])
+    # latent_repr = merge([mu, log_var],
+    #                     mode=lambda p: p[0] + K.random_normal(K.shape(p[0])) * K.exp(p[1] / 2),
+    #                     output_shape=lambda p: p[0])
+
+    return Model(img, latent_repr)
+
+
+def build_decoder():
+    model = Sequential()
+    model.add(Dense(30, activation='relu', input_dim=latent_dim))
+    model.add(Dense(80, activation='relu'))
+    model.add(Dense(120, activation='relu'))
+    model.add(Reshape((1, 120)))
+    model.add(Conv1D(100, 3, activation='tanh', padding="same"))
+    model.add(Flatten())
+    model.add(Dense(ENCODING_DIM_INPUT, activation='linear'))
+    model.summary()
+
+    z = Input(shape=(latent_dim,))
+    img = model(z)
+
+    return Model(z, img)
+
+
+def build_discriminator():
+    model = Sequential()
+    model.add(Dense(512, activation='relu', input_dim=latent_dim))
+    model.add(Reshape((1, 512)))
+    model.add(Conv1D(138, 3, activation='tanh', padding="same"))
+    model.add(Flatten())
+    model.add(Dense(1, activation="sigmoid"))
+    model.summary()
+
+    encoded_repr = Input(shape=(latent_dim,))
+    validity = model(encoded_repr)
+
+    return Model(encoded_repr, validity)
+
+
+def train(X_train, epochs, batch_size=64, sample_interval=50):
+    # Adversarial ground truths
+    valid = np.ones((batch_size, 1))
+    fake = np.zeros((batch_size, 1))
+
+    for epoch in range(epochs):
+
+        # ---------------------
+        #  Train Discriminator
+        # ---------------------
+
+        # Select a random batch of images
+        idx = np.random.randint(0, X_train.shape[0], batch_size)
+        imgs = X_train[idx]
+
+        latent_fake = encoder.predict(imgs)
+        # latent_real = np.random.normal(size=(batch_size, latent_dim))
+        X = np.random.multivariate_normal(mean=[0, 1], cov=[[1, 0], [0, 1]], size=(4, 8))
+        latent_real = np.concatenate((X[0], X[1]), axis=0)
+
+
+        # Train the discriminator
+        d_loss_real = discriminator.train_on_batch(latent_real, valid)
+        d_loss_fake = discriminator.train_on_batch(latent_fake, fake)
+        d_loss = 0.5 * np.add(d_loss_real, d_loss_fake)
+
+        # ---------------------
+        #  Train Generator
+        # ---------------------
+
+        # Train the generator
+        g_loss = adversarial_autoencoder.train_on_batch(imgs, [imgs, valid])
+
+        # Plot the progress
+        print("%d [D loss: %f, acc: %.2f%%] [G loss: %f, mse: %f]" % (
+            epoch, d_loss[0], 100 * d_loss[1], g_loss[0], g_loss[1]))
+
+        # If at save interval => save generated image samples
+        if epoch % (sample_interval * 10) == 0:
+            sample_images(epoch)
+
+
+def sample_images(epoch):
+    R = 50
+    r, c = 4, 4
+    z = np.random.normal(size=(R, latent_dim))
+    gen_imgs1 = decoder.predict(z)
+    gen_imgs = scaler.inverse_transform(gen_imgs1)
+
+    # Xs = preprocessing.normalize(X_train)
+    #
+    # norm = Xs[1]
+    # norm1 = norm.reshape(1, -1)
+    # norm2 = np.tile(norm1, [r * c, 1])
+    #
+    # z = np.random.normal(size=(r * c, latent_dim))
+    #
+    # gen_imgs1 = decoder.predict(z)
+    # gen_imgs = gen_imgs1 * norm2
+
+    n = 16
+    fig = plt.subplots(r, c)
+
+    for i in range(n):
+        ax = plt.subplot(r, c, i + 1)
+        plt.plot(gen_imgs[i], c="dodgerblue")
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+    plt.savefig("images/spc_%d.png" % epoch)
+    plt.close()
+
+    path = "gan_mat"
+    if not os.path.exists(path):
+        os.makedirs(path)
+    scio.savemat('{}\\{}.mat'.format(path, epoch), {'Corn': gen_imgs})
+
+
+def save_model():
+    def save(model, model_name):
+        model_path = "saved_model/%s.json" % model_name
+        weights_path = "saved_model/%s_weights.hdf5" % model_name
+        options = {"file_arch": model_path,
+                   "file_weight": weights_path}
+        json_string = model.to_json()
+        open(options['file_arch'], 'w').write(json_string)
+        model.save_weights(options['file_weight'])
+
+    save(decoder, "aae_generator_8k")
+    # save(discriminator, "aae_discriminator")
+
+
+ENCODING_DIM_INPUT = 701
+latent_dim = 5
+
+# save_dir1 = '.\\gan_libs_mat'
+
+optimizer = Adam(0.0004, 0.5)
+
+# Build and compile the discriminator
+discriminator = build_discriminator()
+discriminator.compile(loss='binary_crossentropy',
+                      optimizer=optimizer,
+                      metrics=['accuracy'])
+
+# Build the encoder / decoder
+encoder = build_encoder()
+decoder = build_decoder()
+
+img = Input(shape=(ENCODING_DIM_INPUT,))
+# The generator takes the image, encodes it and reconstructs it
+# from the encoding
+encoded_repr = encoder(img)
+reconstructed_img = decoder(encoded_repr)
+
+# For the adversarial_autoencoder model we will only train the generator
+discriminator.trainable = False
+
+# The discriminator determines validity of the encoding
+validity = discriminator(encoded_repr)
+
+# The adversarial_autoencoder model  (stacked generator and discriminator)
+adversarial_autoencoder = Model(img, [reconstructed_img, validity])
+adversarial_autoencoder.compile(loss=['mse', 'binary_crossentropy'],
+                                loss_weights=[0.9, 0.1],
+                                optimizer=optimizer)
+#  Load the dataset
+X_s = np.array(pd.read_excel(r"D:\dataset.xlsx", header=None, sheet_name="corn_m5"))
+# random.seed(1)
+# X_train1, X_test1 = train_test_split(X_s, test_size=0.2)
+# # save the dataset
+# path = "gan_mat_Calibrate_1"
+# if not os.path.exists(path):
+#     os.makedirs(path)
+# scio.savemat('{}\\{}.mat'.format(path, 2.0), {'gan_mat_Calibrate_1': X_train1})
+#
+# path = "gan_mat_Calibrate_1"
+# if not os.path.exists(path):
+#     os.makedirs(path)
+# scio.savemat('{}\\{}.mat'.format(path, 2.1), {'gan_mat_Calibrate_1': X_test1})
+#
+# X_train = X_train1[:, 0:701]
+#
+# X_test = X_test1[:, 0:701]
+
+X_train = X_s[:, 0:701]
+
+# Rescale -1 to 1
+scaler = preprocessing.StandardScaler().fit(X_train)
+X_train = scaler.transform(X_train)
+
+
+# X_train = preprocessing.normalize(X_train)
+# X_train = X_train[0]
+# X_train = scaler.transform(X_train)
+
+train(X_train, epochs=1000, batch_size=32, sample_interval=10)
+
+save_model()
